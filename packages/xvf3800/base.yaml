@@ -25,6 +25,9 @@ substitutions:
   # The core sets hidden_ssid ("true" if your network does not broadcast its
   # SSID) and the voice assistant phase IDs.
   log_level: INFO
+  synchronize_wake_sound: "true"
+  report_current_time: "false"
+  hide_current_time_entity: "true"
 
 esphome:
   name: ${name}
@@ -120,7 +123,7 @@ psram:
 external_components:
   - source:
       type: git
-      url: https://github.com/formatBCE/Respeaker-ESPHome-integration
+      url: https://github.com/tommygun333/Respeaker-ESPHome-integration
       ref: ${respeaker_lite_ref}
     components:
       - respeaker_xvf3800

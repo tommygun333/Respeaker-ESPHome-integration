@@ -240,6 +240,7 @@ text_sensor:
     name: "Current device time"
     id: current_time
     icon: mdi:clock
+    internal: ${hide_current_time_entity}
 
 select:
   - platform: template
@@ -417,6 +418,9 @@ script:
     mode: single
     then:
       - lambda: |-
+          // Some devices do not need a clock entity or a minute-by-minute
+          // API publication; leave alarms and timezone sync unaffected.
+          if (!${report_current_time}) return;
           // Publish the current time only when it changed
           static std::string last_time_string = "";
           auto time_now = id(homeassistant_time).now();

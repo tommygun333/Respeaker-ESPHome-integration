@@ -23,6 +23,10 @@ esphome:
             } else if (!id(dsp_status).has_state()) {
               id(dsp_status).publish_state("No response");
             }
+    - priority: -100
+      then:
+        # Start with the power amplifier muted after the XMOS firmware check.
+        - switch.turn_off: amplifier_enable
 
 i2s_audio:
   # One full duplex bus: the microphones and the speaker share the clocks.
@@ -184,7 +188,7 @@ respeaker_xvf3800:
           - lambda: id(factory_reset_phase) = 2;
           - script.execute: control_leds
   firmware:
-    url: https://github.com/formatBCE/Respeaker-ESPHome-integration/raw/${respeaker_lite_ref}/respeaker_xvf3800_i2s_master_v1.0.9_48k.bin
+    url: https://github.com/tommygun333/Respeaker-ESPHome-integration/raw/${respeaker_lite_ref}/respeaker_xvf3800_i2s_master_v1.0.9_48k.bin
     version: "1.0.9"
     md5: b62766ccf8fbbaf924d0d13beace495b
     on_error:
@@ -211,6 +215,31 @@ audio_dac:
   - platform: aic3104
     id: aic3104_dac
     i2c_id: internal_i2c
+
+# XMOS output mute (not microphone mute). Cut idle amplifier hum, while
+# keeping the DSP, microphone and wake-word detector running.
+switch:
+  - platform: template
+    id: amplifier_enable
+    name: "Amplifier Enable"
+    icon: mdi:amplifier
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: |-
+          const uint8_t payload[] = {20, 1, 2, 31, 0};
+          const auto err = id(respeaker).write(payload, sizeof(payload));
+          if (err != i2c::ERROR_OK) {
+            ESP_LOGW("amplifier", "Enable command failed: %d", (int) err);
+          }
+    turn_off_action:
+      - lambda: |-
+          const uint8_t payload[] = {20, 1, 2, 31, 1};
+          const auto err = id(respeaker).write(payload, sizeof(payload));
+          if (err != i2c::ERROR_OK) {
+            ESP_LOGW("amplifier", "Disable command failed: %d", (int) err);
+          }
 
 number:
   # Gain on the ASR output. It always affects wake word; it affects STT only

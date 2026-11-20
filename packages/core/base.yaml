@@ -45,6 +45,10 @@ substitutions:
   # Ref of the core files (the sounds and the wake word models). It is the same
   # as respeaker_lite_ref.
   satellite_core_ref: ${respeaker_lite_ref}
+  # Device-specific opt-ins; Lite and Koala keep upstream behavior.
+  synchronize_wake_sound: "false"
+  report_current_time: "true"
+  hide_current_time_entity: "false"
 
 esphome:
   min_version: 2026.11.0

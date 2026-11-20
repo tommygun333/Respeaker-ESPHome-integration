@@ -170,11 +170,38 @@ micro_wake_word:
                                       condition:
                                         switch.is_on: wake_sound
                                       then:
-                                        - script.execute:
-                                            id: play_sound
-                                            priority: true
-                                            sound_file: "wake_word_triggered_sound"
-                                        - delay: 300ms
+                                        - if:
+                                            condition:
+                                              lambda: return ${synchronize_wake_sound};
+                                            then:
+                                              # The media player starts asynchronously. Do not start
+                                              # recording until the acknowledgement actually finishes.
+                                              - script.execute: wake_sound_start_hook
+                                              - script.execute:
+                                                  id: play_sound
+                                                  priority: true
+                                                  sound_file: "wake_word_triggered_sound"
+                                              - wait_until:
+                                                  condition:
+                                                    media_player.is_announcing: external_media_player
+                                                  timeout: 800ms
+                                              - if:
+                                                  condition:
+                                                    media_player.is_announcing: external_media_player
+                                                  then:
+                                                    - wait_until:
+                                                        condition:
+                                                          not:
+                                                            media_player.is_announcing: external_media_player
+                                                        timeout: 2500ms
+                                              - script.execute: wake_sound_end_hook
+                                            else:
+                                              # Original timing for Lite and Koala.
+                                              - script.execute:
+                                                  id: play_sound
+                                                  priority: true
+                                                  sound_file: "wake_word_triggered_sound"
+                                              - delay: 300ms
                             - voice_assistant.start:
                                 wake_word: !lambda return wake_word;
                             # Device hook, empty here. See the script below.
@@ -368,6 +395,12 @@ script:
   # A device package adds actions with "- id: !extend wake_word_start_hook".
   # The XVF3800 locks its beam to the speaker direction.
   - id: wake_word_start_hook
+    then: []
+
+  # Device hooks around the local wake acknowledgement. No-op for Lite/Koala.
+  - id: wake_sound_start_hook
+    then: []
+  - id: wake_sound_end_hook
     then: []
 
   # Sets the wake word cutoffs. When Home Assistant verifies the wake word,

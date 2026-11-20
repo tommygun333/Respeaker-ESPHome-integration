@@ -10,6 +10,22 @@
 # sound URLs are substitutions there. Override any of them to use your own files.
 # =============================================================================
 
+number:
+  # Applied only to the local wake acknowledgement; media and TTS are unchanged.
+  - platform: template
+    id: wake_sound_attenuation
+    name: "Wake Sound Attenuation"
+    icon: mdi:volume-minus
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 12
+    min_value: 0
+    max_value: 30
+    step: 1
+    mode: slider
+    unit_of_measurement: dB
+
 switch:
   # Beam Lock. When on, the XVF3800 beam is pinned to the wake-word direction
   # for the duration of command capture (released on STT VAD end). Off by default
@@ -43,6 +59,35 @@ micro_wake_word:
     gain_factor: 1
 
 script:
+  - id: !extend wake_sound_start_hook
+    then:
+      # Enable the amplifier before requesting the asynchronous wake sound.
+      - script.stop: xvf_amplifier_idle_off
+      - switch.turn_on: amplifier_enable
+      - mixer_speaker.apply_ducking:
+          id: announcement_mixing_input
+          decibel_reduction: !lambda return id(wake_sound_attenuation).state;
+          duration: 0s
+  - id: !extend wake_sound_end_hook
+    then:
+      - mixer_speaker.apply_ducking:
+          id: announcement_mixing_input
+          decibel_reduction: 0
+          duration: 0s
+  - id: xvf_amplifier_idle_off
+    mode: restart
+    then:
+      - delay: 2s  # Avoid pops between closely spaced audio clips.
+      - if:
+          condition:
+            and:
+              - not:
+                  media_player.is_announcing: external_media_player
+              - not:
+                  media_player.is_playing: external_media_player
+          then:
+            - switch.turn_off: amplifier_enable
+
   # The core runs this hook after a wake word started the voice assistant.
   - id: !extend wake_word_start_hook
     then:
@@ -71,12 +116,29 @@ voice_assistant:
     # Safety-net unlock: covers paths where on_stt_vad_end never fired
     # (pipeline error mid-capture, abort, etc.). Idempotent.
     - lambda: id(respeaker).unlock_beam();
+    - script.execute: xvf_amplifier_idle_off
 
 media_player:
   # The full volume range, and the volume display on the LED ring.
   - id: !extend external_media_player
     volume_min: 0.0
     volume_max: 1.0
+    on_announcement:
+      - script.stop: xvf_amplifier_idle_off
+      - switch.turn_on: amplifier_enable
+    on_play:
+      - script.stop: xvf_amplifier_idle_off
+      - switch.turn_on: amplifier_enable
+    on_state:
+      - if:
+          condition:
+            and:
+              - not:
+                  media_player.is_announcing: external_media_player
+              - not:
+                  media_player.is_playing: external_media_player
+          then:
+            - script.execute: xvf_amplifier_idle_off
     on_mute:
       - delay: 100ms  # Debounce
       - script.execute: control_leds_volume_changed
