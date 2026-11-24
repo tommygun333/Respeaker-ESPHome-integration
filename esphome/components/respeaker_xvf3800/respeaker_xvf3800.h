@@ -306,20 +306,27 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
     }
     const uint8_t req[] = {PP_SERVICER_RESID, static_cast<uint8_t>(cmd | I2C_COMMAND_READ_BIT), 5};
     uint8_t response[5]{};
-    const auto err = this->write_read(req, sizeof(req), response, sizeof(response));
-    if (err != i2c::ERROR_OK) {
-      ESP_LOGW("xvf_dsp", "PP read cmd=%u I2C error=%d", cmd, static_cast<int>(err));
-      return false;
+    // Retry the same request promptly, as in the ReSpeaker host protocol.
+    // Bound synchronous waits: this helper also runs in the audio main loop.
+    unsigned attempts = 0;
+    for (; attempts < 4; ++attempts) {
+      const auto err = this->write_read(req, sizeof(req), response, sizeof(response));
+      if (err != i2c::ERROR_OK) {
+        ESP_LOGW("xvf_dsp", "PP read cmd=%u I2C error=%d", cmd, static_cast<int>(err));
+        return false;
+      }
+      if (response[0] != SERVICER_COMMAND_RETRY && response[0] != CTRL_WAIT) break;
+      if (attempts < 3) delay(10);
     }
     if (response[0] != CTRL_DONE) {
-      ESP_LOGW("xvf_dsp", "PP read cmd=%u XMOS status=0x%02X", cmd, response[0]);
+      ESP_LOGW("xvf_dsp", "PP read cmd=%u XMOS status=0x%02X after %u attempt(s)", cmd, response[0], attempts < 4 ? attempts + 1 : 4);
       return false;
     }
     memcpy(&value, response + 1, sizeof(value));
     if (!this->pp_read_reported_[cmd & 0x7F]) {
       this->pp_read_reported_[cmd & 0x7F] = true;
-      ESP_LOGI("xvf_dsp", "PP read cmd=%u OK: %02X %02X %02X %02X",
-               cmd, response[1], response[2], response[3], response[4]);
+      ESP_LOGI("xvf_dsp", "PP read cmd=%u OK after %u attempt(s): %02X %02X %02X %02X",
+               cmd, attempts + 1, response[1], response[2], response[3], response[4]);
     }
     return true;
   }
@@ -336,7 +343,18 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
       ESP_LOGW("xvf_dsp", "PP write failed: cmd=%u", cmd);
       return false;
     }
-    ESP_LOGI("xvf_dsp", "PP write cmd=%u accepted by I2C (not verified)", cmd);
+    // I2C ACK alone does not confirm that the XMOS servicer accepted a write.
+    uint8_t status = 0xFF;
+    const auto err = this->read(&status, 1);
+    if (err != i2c::ERROR_OK) {
+      ESP_LOGW("xvf_dsp", "PP write cmd=%u status read error=%d; outcome uncertain", cmd, static_cast<int>(err));
+      return false;
+    }
+    if (status != CTRL_DONE) {
+      ESP_LOGW("xvf_dsp", "PP write cmd=%u XMOS status=0x%02X", cmd, status);
+      return false;
+    }
+    ESP_LOGI("xvf_dsp", "PP write cmd=%u XMOS status=OK", cmd);
     return true;
   }
   bool command_profile_active() const { return this->restore_echo_ || this->restore_nl_; }
