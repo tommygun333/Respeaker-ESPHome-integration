@@ -41,6 +41,13 @@ api:
       then:
         - voice_assistant.stop
 
+globals:
+  # Only a local wake-word detection may request the listening-ready sound.
+  - id: wake_sound_pending
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+
 switch:
   # Mute Sound Switch.
   - platform: template
@@ -174,27 +181,12 @@ micro_wake_word:
                                             condition:
                                               lambda: return ${synchronize_wake_sound};
                                             then:
-                                              # The media player starts asynchronously. Do not start
-                                              # recording until the acknowledgement actually finishes.
-                                              - script.execute: wake_sound_start_hook
-                                              - script.execute:
-                                                  id: play_sound
-                                                  priority: true
-                                                  sound_file: "wake_word_triggered_sound"
-                                              - wait_until:
-                                                  condition:
-                                                    media_player.is_announcing: external_media_player
-                                                  timeout: 800ms
-                                              - if:
-                                                  condition:
-                                                    media_player.is_announcing: external_media_player
-                                                  then:
-                                                    - wait_until:
-                                                        condition:
-                                                          not:
-                                                            media_player.is_announcing: external_media_player
-                                                        timeout: 2500ms
-                                              - script.execute: wake_sound_end_hook
+                                              # Start the pipeline immediately. The acknowledgement
+                                              # is played by on_listening once HA starts STT.
+                                              - lambda: id(wake_sound_pending) = true;
+                                              - logger.log:
+                                                  level: INFO
+                                                  format: "Wake word: starting pipeline before acknowledgement"
                                             else:
                                               # Original timing for Lite and Koala.
                                               - script.execute:
@@ -260,10 +252,12 @@ voice_assistant:
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
   on_client_disconnected:
+    - lambda: id(wake_sound_pending) = false;
     - voice_assistant.stop:
     - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
     - script.execute: control_leds
   on_error:
+    - lambda: id(wake_sound_pending) = false;
     # Only set the error phase if the error code is different than duplicate_wake_up_detected or stt-no-text-recognized
     # These two are ignored for a better user experience
     - if:
@@ -312,11 +306,29 @@ voice_assistant:
               decibel_reduction: 20
               duration: 0.0s
   on_wake_word_rejected:
+    - lambda: id(wake_sound_pending) = false;
     - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
     - script.execute: control_leds
   on_listening:
     - lambda: id(voice_assistant_phase) = ${voice_assist_waiting_for_command_phase_id};
     - script.execute: control_leds
+    - if:
+        condition:
+          lambda: return id(wake_sound_pending);
+        then:
+          # Consume the request before launching any asynchronous actions.
+          - lambda: id(wake_sound_pending) = false;
+          - if:
+              condition:
+                and:
+                  - voice_assistant.is_running:
+                  - switch.is_on: wake_sound
+                  - switch.is_off: mic_mute_switch
+              then:
+                - logger.log:
+                    level: INFO
+                    format: "STT ready: playing attenuated wake acknowledgement"
+                - script.execute: play_listening_wake_sound
   on_stt_vad_start:
     - lambda: id(voice_assistant_phase) = ${voice_assist_listening_for_command_phase_id};
     - script.execute: control_leds
@@ -354,6 +366,7 @@ voice_assistant:
     
   # When the voice assistant ends ...
   on_end:
+    - lambda: id(wake_sound_pending) = false;
     - wait_until:
         not:
           voice_assistant.is_running:
@@ -402,6 +415,34 @@ script:
     then: []
   - id: wake_sound_end_hook
     then: []
+
+  # Keep the attenuation active for the asynchronous announcement, without
+  # blocking the already-running voice pipeline. Both waits are bounded.
+  - id: play_listening_wake_sound
+    mode: single
+    then:
+      - script.execute: wake_sound_start_hook
+      - script.execute:
+          id: play_sound
+          priority: true
+          sound_file: "wake_word_triggered_sound"
+      - wait_until:
+          condition:
+            media_player.is_announcing: external_media_player
+          timeout: 800ms
+      - if:
+          condition:
+            media_player.is_announcing: external_media_player
+          then:
+            - wait_until:
+                condition:
+                  not:
+                    media_player.is_announcing: external_media_player
+                timeout: 2500ms
+      - script.execute: wake_sound_end_hook
+      - logger.log:
+          level: INFO
+          format: "Wake acknowledgement complete; attenuation restored"
 
   # Sets the wake word cutoffs. When Home Assistant verifies the wake word,
   # microWakeWord only proposes detections, so the cutoffs are lower. A ringing
