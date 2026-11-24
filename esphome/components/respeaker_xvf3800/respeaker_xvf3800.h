@@ -299,23 +299,44 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   // All PP commands affect Comms only; ASR and I2S routing are untouched.
   template<typename T> bool read_pp(uint8_t cmd, T &value) {
     static_assert(sizeof(T) == 4, "XMOS scalar must be 32-bit");
-    if (!this->tuning_applied_ || this->is_failed()) return false;
+    if (!this->tuning_applied_ || this->is_failed()) {
+      ESP_LOGW("xvf_dsp", "PP read cmd=%u blocked: tuning_ready=%d failed=%d",
+               cmd, this->tuning_applied_, this->is_failed());
+      return false;
+    }
     const uint8_t req[] = {PP_SERVICER_RESID, static_cast<uint8_t>(cmd | I2C_COMMAND_READ_BIT), 5};
     uint8_t response[5]{};
-    if (this->write_read(req, sizeof(req), response, sizeof(response)) != i2c::ERROR_OK ||
-        response[0] != CTRL_DONE) return false;
+    const auto err = this->write_read(req, sizeof(req), response, sizeof(response));
+    if (err != i2c::ERROR_OK) {
+      ESP_LOGW("xvf_dsp", "PP read cmd=%u I2C error=%d", cmd, static_cast<int>(err));
+      return false;
+    }
+    if (response[0] != CTRL_DONE) {
+      ESP_LOGW("xvf_dsp", "PP read cmd=%u XMOS status=0x%02X", cmd, response[0]);
+      return false;
+    }
     memcpy(&value, response + 1, sizeof(value));
+    if (!this->pp_read_reported_[cmd & 0x7F]) {
+      this->pp_read_reported_[cmd & 0x7F] = true;
+      ESP_LOGI("xvf_dsp", "PP read cmd=%u OK: %02X %02X %02X %02X",
+               cmd, response[1], response[2], response[3], response[4]);
+    }
     return true;
   }
   template<typename T> bool write_pp(uint8_t cmd, T value) {
     static_assert(sizeof(T) == 4, "XMOS scalar must be 32-bit");
-    if (!this->tuning_applied_ || this->is_failed()) return false;
+    if (!this->tuning_applied_ || this->is_failed()) {
+      ESP_LOGW("xvf_dsp", "PP write cmd=%u blocked: tuning_ready=%d failed=%d",
+               cmd, this->tuning_applied_, this->is_failed());
+      return false;
+    }
     uint8_t request[7] = {PP_SERVICER_RESID, cmd, 4};
     memcpy(request + 3, &value, sizeof(value));
     if (this->write(request, sizeof(request)) != i2c::ERROR_OK) {
       ESP_LOGW("xvf_dsp", "PP write failed: cmd=%u", cmd);
       return false;
     }
+    ESP_LOGI("xvf_dsp", "PP write cmd=%u accepted by I2C (not verified)", cmd);
     return true;
   }
   bool command_profile_active() const { return this->restore_echo_ || this->restore_nl_; }
@@ -355,6 +376,7 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   }
 
  protected:
+  bool pp_read_reported_[128]{};
   bool restore_echo_{false};
   bool restore_nl_{false};
   int32_t saved_echo_{0};
