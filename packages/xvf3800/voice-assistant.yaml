@@ -61,6 +61,10 @@ micro_wake_word:
 script:
   - id: !extend wake_sound_start_hook
     then:
+      - lambda: |-
+          if (id(xvf_command_profile).state) {
+            id(respeaker).begin_command_profile(id(xvf_command_echo).state, id(xvf_command_nl).state);
+          }
       # Enable the amplifier before requesting the asynchronous wake sound.
       - script.stop: xvf_amplifier_idle_off
       - switch.turn_on: amplifier_enable
@@ -108,11 +112,19 @@ script:
 
 # These lists add to the core triggers, so they run after the core actions.
 voice_assistant:
+  on_error:
+    - lambda: id(respeaker).restore_command_profile();
+  on_client_disconnected:
+    - lambda: id(respeaker).restore_command_profile();
+  on_stt_end:
+    - lambda: id(respeaker).restore_command_profile();
   on_stt_vad_end:
+    - lambda: id(respeaker).restore_command_profile();
     # Release the beam as soon as command capture is over, so the stop-word
     # detector can still hear the user from anywhere in the room during TTS.
     - lambda: id(respeaker).unlock_beam();
   on_end:
+    - lambda: id(respeaker).restore_command_profile();
     # Safety-net unlock: covers paths where on_stt_vad_end never fired
     # (pipeline error mid-capture, abort, etc.). Idempotent.
     - lambda: id(respeaker).unlock_beam();

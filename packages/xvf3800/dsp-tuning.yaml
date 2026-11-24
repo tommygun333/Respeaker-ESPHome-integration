@@ -1,0 +1,187 @@
+# Comms-only controls. With the stock route, Comms = STT channel 0;
+# ASR = wake word channel 1. These do not alter ASR or I2S routing.
+switch:
+  - platform: template
+    id: xvf_command_profile
+    name: "Comms - Wake command DSP profile"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: xvf_command_echo
+    name: "Comms - Disable residual echo during command"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: xvf_command_nl
+    name: "Comms - Disable nonlinear echo during command"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template
+    id: pp_echo_on
+    name: "Comms - Residual echo suppression"
+    entity_category: config
+    restore_mode: DISABLED
+    optimistic: false
+    turn_on_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<int32_t>(23, 1);
+    turn_off_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<int32_t>(23, 0);
+  - platform: template
+    id: pp_nl_atten_on
+    name: "Comms - Nonlinear echo attenuation"
+    entity_category: config
+    restore_mode: DISABLED
+    optimistic: false
+    turn_on_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<int32_t>(27, 1);
+    turn_off_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<int32_t>(27, 0);
+  - platform: template
+    id: pp_agc_on
+    name: "Comms - Automatic gain control"
+    entity_category: config
+    restore_mode: DISABLED
+    optimistic: false
+    turn_on_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<int32_t>(10, 1);
+    turn_off_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<int32_t>(10, 0);
+
+number:
+  - platform: template
+    id: pp_min_ns
+    name: "Comms - Stationary noise gain floor"
+    entity_category: config
+    min_value: 0
+    max_value: 1
+    step: 0.01
+    mode: slider
+    update_interval: 10s
+    lambda: |-
+      float value;
+      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(21, value)) return {};
+      return value;
+    set_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<float>(21, x);
+  - platform: template
+    id: pp_min_nn
+    name: "Comms - Nonstationary noise gain floor"
+    entity_category: config
+    min_value: 0
+    max_value: 1
+    step: 0.01
+    mode: slider
+    update_interval: 10s
+    lambda: |-
+      float value;
+      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(22, value)) return {};
+      return value;
+    set_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<float>(22, x);
+  - platform: template
+    id: pp_gamma_e
+    name: "Comms - Direct echo gamma"
+    entity_category: config
+    min_value: 0
+    max_value: 2
+    step: 0.1
+    mode: slider
+    update_interval: 10s
+    lambda: |-
+      float value;
+      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(24, value)) return {};
+      return value;
+    set_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<float>(24, x);
+  - platform: template
+    id: pp_gamma_etail
+    name: "Comms - Tail echo gamma"
+    entity_category: config
+    min_value: 0
+    max_value: 2
+    step: 0.1
+    mode: slider
+    update_interval: 10s
+    lambda: |-
+      float value;
+      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(25, value)) return {};
+      return value;
+    set_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<float>(25, x);
+  - platform: template
+    id: pp_gamma_enl
+    name: "Comms - Nonlinear echo gamma"
+    entity_category: config
+    min_value: 0
+    max_value: 5
+    step: 0.1
+    mode: slider
+    update_interval: 10s
+    lambda: |-
+      float value;
+      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(26, value)) return {};
+      return value;
+    set_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) id(respeaker).write_pp<float>(26, x);
+
+select:
+  - platform: template
+    id: pp_dt_sensitive
+    name: "Comms - Double-talk sensitivity"
+    entity_category: config
+    options: ["0", "1", "2", "3", "4", "5", "10", "11", "12", "13", "14", "15"]
+    update_interval: 10s
+    lambda: |-
+      int32_t value;
+      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(31, value)) return {};
+      if (!((value >= 0 && value <= 5) || (value >= 10 && value <= 15))) return {};
+      return std::to_string(value);
+    set_action:
+      - lambda: |-
+          if (!id(respeaker).command_profile_active()) {
+            const int32_t value = x.size() == 2 ? 10 + (x[1] - '0') : x[0] - '0';
+            id(respeaker).write_pp(31, value);
+          }
+
+binary_sensor:
+  - platform: template
+    name: "Comms - Command DSP profile active or restoring"
+    entity_category: diagnostic
+    lambda: return id(respeaker).command_profile_active();
+
+interval:
+  # Switch readback is intentionally throttled; template switch lambdas run every loop.
+  - interval: 5s
+    then:
+      - lambda: |-
+          if (id(respeaker).command_profile_active()) return;
+          int32_t value;
+          if (id(respeaker).read_pp(23, value)) id(pp_echo_on).publish_state(value != 0);
+          if (id(respeaker).read_pp(27, value)) id(pp_nl_atten_on).publish_state(value != 0);
+          if (id(respeaker).read_pp(10, value)) id(pp_agc_on).publish_state(value != 0);
+  # Retry restoration even if a pipeline callback was missed or I2C was busy.
+  - interval: 250ms
+    then:
+      - lambda: |-
+          if (id(respeaker).command_profile_active() &&
+              (!id(va).is_running() || !id(xvf_command_profile).state ||
+               id(voice_assistant_phase) == ${voice_assist_thinking_phase_id} ||
+               id(voice_assistant_phase) == ${voice_assist_replying_phase_id} ||
+               id(voice_assistant_phase) == ${voice_assist_error_phase_id} ||
+               id(voice_assistant_phase) == ${voice_assist_not_ready_phase_id})) {
+            id(respeaker).restore_command_profile();
+          }

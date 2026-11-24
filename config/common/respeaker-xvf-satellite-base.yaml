@@ -18,5 +18,6 @@ packages:
   base: !include ../../packages/xvf3800/base.yaml
   hardware: !include ../../packages/xvf3800/hardware.yaml
   voice_assistant: !include ../../packages/xvf3800/voice-assistant.yaml
+  dsp_tuning: !include ../../packages/xvf3800/dsp-tuning.yaml
   leds: !include ../../packages/xvf3800/leds.yaml
   timers_alarm: !include ../../packages/xvf3800/timers-alarm.yaml

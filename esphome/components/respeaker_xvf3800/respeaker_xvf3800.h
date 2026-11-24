@@ -296,7 +296,69 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   void set_asr_out_gain(float gain);
   void set_agc_max_gain(float gain);
 
+  // All PP commands affect Comms only; ASR and I2S routing are untouched.
+  template<typename T> bool read_pp(uint8_t cmd, T &value) {
+    static_assert(sizeof(T) == 4, "XMOS scalar must be 32-bit");
+    if (!this->tuning_applied_ || this->is_failed()) return false;
+    const uint8_t req[] = {PP_SERVICER_RESID, static_cast<uint8_t>(cmd | I2C_COMMAND_READ_BIT), 5};
+    uint8_t response[5]{};
+    if (this->write_read(req, sizeof(req), response, sizeof(response)) != i2c::ERROR_OK ||
+        response[0] != CTRL_DONE) return false;
+    memcpy(&value, response + 1, sizeof(value));
+    return true;
+  }
+  template<typename T> bool write_pp(uint8_t cmd, T value) {
+    static_assert(sizeof(T) == 4, "XMOS scalar must be 32-bit");
+    if (!this->tuning_applied_ || this->is_failed()) return false;
+    uint8_t request[7] = {PP_SERVICER_RESID, cmd, 4};
+    memcpy(request + 3, &value, sizeof(value));
+    if (this->write(request, sizeof(request)) != i2c::ERROR_OK) {
+      ESP_LOGW("xvf_dsp", "PP write failed: cmd=%u", cmd);
+      return false;
+    }
+    return true;
+  }
+  bool command_profile_active() const { return this->restore_echo_ || this->restore_nl_; }
+  // Keep the snapshot until a readback confirms restoration. Never guess defaults.
+  void begin_command_profile(bool echo, bool nl) {
+    if (this->asr_route_ || this->command_profile_active()) return;
+    if (echo && !this->read_pp(23, this->saved_echo_)) {
+      ESP_LOGW("xvf_dsp", "Cannot read echo setting; profile skipped");
+      return;
+    }
+    if (nl && !this->read_pp(27, this->saved_nl_)) {
+      ESP_LOGW("xvf_dsp", "Cannot read nonlinear setting; profile skipped");
+      return;
+    }
+    // Mark pending even on a failed write: a transport failure is ambiguous.
+    this->restore_echo_ = echo && this->saved_echo_ != 0;
+    this->restore_nl_ = nl && this->saved_nl_ != 0;
+    if (this->restore_echo_) this->write_pp<int32_t>(23, 0);
+    if (this->restore_nl_) this->write_pp<int32_t>(27, 0);
+    int32_t actual;
+    if (this->restore_echo_ && (!this->read_pp(23, actual) || actual != 0))
+      ESP_LOGW("xvf_dsp", "Echo override not yet confirmed");
+    if (this->restore_nl_ && (!this->read_pp(27, actual) || actual != 0))
+      ESP_LOGW("xvf_dsp", "Nonlinear override not yet confirmed");
+    ESP_LOGI("xvf_dsp", "Command profile requested: echo=%d nonlinear=%d", echo, nl);
+  }
+  void restore_command_profile() {
+    int32_t actual;
+    if (this->restore_echo_) {
+      if (this->read_pp(23, actual) && actual == this->saved_echo_) this->restore_echo_ = false;
+      else this->write_pp(23, this->saved_echo_);
+    }
+    if (this->restore_nl_) {
+      if (this->read_pp(27, actual) && actual == this->saved_nl_) this->restore_nl_ = false;
+      else this->write_pp(27, this->saved_nl_);
+    }
+  }
+
  protected:
+  bool restore_echo_{false};
+  bool restore_nl_{false};
+  int32_t saved_echo_{0};
+  int32_t saved_nl_{0};
 #ifdef USE_RESPEAKER_XVF3800_STATE_CALLBACK
   CallbackManager<void(DFUAutomationState, float, RespeakerXVF3800UpdaterStatus)> state_callback_{};
 #endif
