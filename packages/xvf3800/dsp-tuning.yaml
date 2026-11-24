@@ -20,6 +20,12 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_OFF
   - platform: template
+    id: xvf_profile_full_capture
+    name: "Comms - Keep wake DSP profile until STT end"
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
     id: pp_echo_on
     name: "Comms - Residual echo suppression"
     entity_category: config
@@ -58,6 +64,18 @@ switch:
 
 number:
   - platform: template
+    id: xvf_profile_tail_ms
+    name: "Comms - Wake echo override tail"
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: 500
+    min_value: 0
+    max_value: 3000
+    step: 50
+    mode: slider
+    unit_of_measurement: ms
+  - platform: template
     id: pp_min_ns
     name: "Comms - Stationary noise gain floor"
     entity_category: config
@@ -68,7 +86,8 @@ number:
     update_interval: 10s
     lambda: |-
       float value;
-      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(21, value)) return {};
+      if (id(va).is_running() || id(respeaker).command_profile_active() || !id(respeaker).read_pp(21, value)) return {};
+      if (!std::isfinite(value) || (id(pp_min_ns).has_state() && fabsf(id(pp_min_ns).state - value) < 0.0001f)) return {};
       return value;
     set_action:
       - lambda: |-
@@ -84,7 +103,8 @@ number:
     update_interval: 10s
     lambda: |-
       float value;
-      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(22, value)) return {};
+      if (id(va).is_running() || id(respeaker).command_profile_active() || !id(respeaker).read_pp(22, value)) return {};
+      if (!std::isfinite(value) || (id(pp_min_nn).has_state() && fabsf(id(pp_min_nn).state - value) < 0.0001f)) return {};
       return value;
     set_action:
       - lambda: |-
@@ -100,7 +120,8 @@ number:
     update_interval: 10s
     lambda: |-
       float value;
-      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(24, value)) return {};
+      if (id(va).is_running() || id(respeaker).command_profile_active() || !id(respeaker).read_pp(24, value)) return {};
+      if (!std::isfinite(value) || (id(pp_gamma_e).has_state() && fabsf(id(pp_gamma_e).state - value) < 0.0001f)) return {};
       return value;
     set_action:
       - lambda: |-
@@ -116,7 +137,8 @@ number:
     update_interval: 10s
     lambda: |-
       float value;
-      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(25, value)) return {};
+      if (id(va).is_running() || id(respeaker).command_profile_active() || !id(respeaker).read_pp(25, value)) return {};
+      if (!std::isfinite(value) || (id(pp_gamma_etail).has_state() && fabsf(id(pp_gamma_etail).state - value) < 0.0001f)) return {};
       return value;
     set_action:
       - lambda: |-
@@ -132,7 +154,8 @@ number:
     update_interval: 10s
     lambda: |-
       float value;
-      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(26, value)) return {};
+      if (id(va).is_running() || id(respeaker).command_profile_active() || !id(respeaker).read_pp(26, value)) return {};
+      if (!std::isfinite(value) || (id(pp_gamma_enl).has_state() && fabsf(id(pp_gamma_enl).state - value) < 0.0001f)) return {};
       return value;
     set_action:
       - lambda: |-
@@ -147,9 +170,11 @@ select:
     update_interval: 10s
     lambda: |-
       int32_t value;
-      if (id(respeaker).command_profile_active() || !id(respeaker).read_pp(31, value)) return {};
+      if (id(va).is_running() || id(respeaker).command_profile_active() || !id(respeaker).read_pp(31, value)) return {};
       if (!((value >= 0 && value <= 5) || (value >= 10 && value <= 15))) return {};
-      return std::to_string(value);
+      const auto option = std::to_string(value);
+      if (id(pp_dt_sensitive).has_state() && id(pp_dt_sensitive).current_option() == option.c_str()) return {};
+      return option;
     set_action:
       - lambda: |-
           if (!id(respeaker).command_profile_active()) {
@@ -164,21 +189,36 @@ binary_sensor:
     lambda: return id(respeaker).command_profile_active();
 
 interval:
-  # Switch readback is intentionally throttled; template switch lambdas run every loop.
-  - interval: 5s
+  # Spread the three readbacks across loop iterations, not one blocking callback.
+  - interval: 10s
     then:
       - lambda: |-
-          if (id(respeaker).command_profile_active()) return;
+          if (id(va).is_running() || id(respeaker).command_profile_active()) return;
           int32_t value;
-          if (id(respeaker).read_pp(23, value)) id(pp_echo_on).publish_state(value != 0);
-          if (id(respeaker).read_pp(27, value)) id(pp_nl_atten_on).publish_state(value != 0);
-          if (id(respeaker).read_pp(10, value)) id(pp_agc_on).publish_state(value != 0);
+          if (id(respeaker).read_pp(23, value) &&
+              (!id(pp_echo_on).has_state() || id(pp_echo_on).state != (value != 0)))
+            id(pp_echo_on).publish_state(value != 0);
+      - delay: 100ms
+      - lambda: |-
+          if (id(va).is_running() || id(respeaker).command_profile_active()) return;
+          int32_t value;
+          if (id(respeaker).read_pp(27, value) &&
+              (!id(pp_nl_atten_on).has_state() || id(pp_nl_atten_on).state != (value != 0)))
+            id(pp_nl_atten_on).publish_state(value != 0);
+      - delay: 100ms
+      - lambda: |-
+          if (id(va).is_running() || id(respeaker).command_profile_active()) return;
+          int32_t value;
+          if (id(respeaker).read_pp(10, value) &&
+              (!id(pp_agc_on).has_state() || id(pp_agc_on).state != (value != 0)))
+            id(pp_agc_on).publish_state(value != 0);
   # Retry restoration even if a pipeline callback was missed or I2C was busy.
   - interval: 250ms
     then:
       - lambda: |-
           if (id(respeaker).command_profile_active() &&
-              (!id(va).is_running() || !id(xvf_command_profile).state ||
+              (id(respeaker).command_profile_restore_requested() ||
+               !id(va).is_running() || !id(xvf_command_profile).state ||
                id(voice_assistant_phase) == ${voice_assist_thinking_phase_id} ||
                id(voice_assistant_phase) == ${voice_assist_replying_phase_id} ||
                id(voice_assistant_phase) == ${voice_assist_error_phase_id} ||

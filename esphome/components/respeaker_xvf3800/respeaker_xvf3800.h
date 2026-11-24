@@ -300,7 +300,7 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
   template<typename T> bool read_pp(uint8_t cmd, T &value) {
     static_assert(sizeof(T) == 4, "XMOS scalar must be 32-bit");
     if (!this->tuning_applied_ || this->is_failed()) {
-      ESP_LOGW("xvf_dsp", "PP read cmd=%u blocked: tuning_ready=%d failed=%d",
+      ESP_LOGD("xvf_dsp", "PP read cmd=%u blocked: tuning_ready=%d failed=%d",
                cmd, this->tuning_applied_, this->is_failed());
       return false;
     }
@@ -312,22 +312,17 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
     for (; attempts < 4; ++attempts) {
       const auto err = this->write_read(req, sizeof(req), response, sizeof(response));
       if (err != i2c::ERROR_OK) {
-        ESP_LOGW("xvf_dsp", "PP read cmd=%u I2C error=%d", cmd, static_cast<int>(err));
+        ESP_LOGD("xvf_dsp", "PP read cmd=%u I2C error=%d", cmd, static_cast<int>(err));
         return false;
       }
       if (response[0] != SERVICER_COMMAND_RETRY && response[0] != CTRL_WAIT) break;
       if (attempts < 3) delay(10);
     }
     if (response[0] != CTRL_DONE) {
-      ESP_LOGW("xvf_dsp", "PP read cmd=%u XMOS status=0x%02X after %u attempt(s)", cmd, response[0], attempts < 4 ? attempts + 1 : 4);
+      ESP_LOGD("xvf_dsp", "PP read cmd=%u XMOS status=0x%02X after %u attempt(s)", cmd, response[0], attempts < 4 ? attempts + 1 : 4);
       return false;
     }
     memcpy(&value, response + 1, sizeof(value));
-    if (!this->pp_read_reported_[cmd & 0x7F]) {
-      this->pp_read_reported_[cmd & 0x7F] = true;
-      ESP_LOGI("xvf_dsp", "PP read cmd=%u OK after %u attempt(s): %02X %02X %02X %02X",
-               cmd, attempts + 1, response[1], response[2], response[3], response[4]);
-    }
     return true;
   }
   template<typename T> bool write_pp(uint8_t cmd, T value) {
@@ -354,13 +349,15 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
       ESP_LOGW("xvf_dsp", "PP write cmd=%u XMOS status=0x%02X", cmd, status);
       return false;
     }
-    ESP_LOGI("xvf_dsp", "PP write cmd=%u XMOS status=OK", cmd);
+    ESP_LOGD("xvf_dsp", "PP write cmd=%u XMOS status=OK", cmd);
     return true;
   }
   bool command_profile_active() const { return this->restore_echo_ || this->restore_nl_; }
+  bool command_profile_restore_requested() const { return this->profile_restore_requested_; }
   // Keep the snapshot until a readback confirms restoration. Never guess defaults.
   void begin_command_profile(bool echo, bool nl) {
     if (this->asr_route_ || this->command_profile_active()) return;
+    this->profile_restore_requested_ = false;
     if (echo && !this->read_pp(23, this->saved_echo_)) {
       ESP_LOGW("xvf_dsp", "Cannot read echo setting; profile skipped");
       return;
@@ -379,9 +376,10 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
       ESP_LOGW("xvf_dsp", "Echo override not yet confirmed");
     if (this->restore_nl_ && (!this->read_pp(27, actual) || actual != 0))
       ESP_LOGW("xvf_dsp", "Nonlinear override not yet confirmed");
-    ESP_LOGI("xvf_dsp", "Command profile requested: echo=%d nonlinear=%d", echo, nl);
+    ESP_LOGD("xvf_dsp", "Command profile requested: echo=%d nonlinear=%d", echo, nl);
   }
   void restore_command_profile() {
+    this->profile_restore_requested_ = this->command_profile_active();
     int32_t actual;
     if (this->restore_echo_) {
       if (this->read_pp(23, actual) && actual == this->saved_echo_) this->restore_echo_ = false;
@@ -391,10 +389,11 @@ class RespeakerXVF3800 : public i2c::I2CDevice, public Component {
       if (this->read_pp(27, actual) && actual == this->saved_nl_) this->restore_nl_ = false;
       else this->write_pp(27, this->saved_nl_);
     }
+    this->profile_restore_requested_ = this->command_profile_active();
   }
 
  protected:
-  bool pp_read_reported_[128]{};
+  bool profile_restore_requested_{false};
   bool restore_echo_{false};
   bool restore_nl_{false};
   int32_t saved_echo_{0};

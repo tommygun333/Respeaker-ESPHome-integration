@@ -61,6 +61,7 @@ micro_wake_word:
 script:
   - id: !extend wake_sound_start_hook
     then:
+      - script.stop: xvf_profile_tail_restore
       - lambda: |-
           if (id(xvf_command_profile).state) {
             id(respeaker).begin_command_profile(id(xvf_command_echo).state, id(xvf_command_nl).state);
@@ -78,6 +79,20 @@ script:
           id: announcement_mixing_input
           decibel_reduction: 0
           duration: 0s
+      - if:
+          condition:
+            and:
+              - lambda: return id(respeaker).command_profile_active();
+              - switch.is_off: xvf_profile_full_capture
+          then:
+            - script.execute: xvf_profile_tail_restore
+  # Non-blocking delay after the announcement ends. Early pipeline termination
+  # cancels this timer and restores immediately; the interval retries failures.
+  - id: xvf_profile_tail_restore
+    mode: restart
+    then:
+      - delay: !lambda return static_cast<uint32_t>(id(xvf_profile_tail_ms).state);
+      - lambda: id(respeaker).restore_command_profile();
   - id: xvf_amplifier_idle_off
     mode: restart
     then:
@@ -113,17 +128,22 @@ script:
 # These lists add to the core triggers, so they run after the core actions.
 voice_assistant:
   on_error:
+    - script.stop: xvf_profile_tail_restore
     - lambda: id(respeaker).restore_command_profile();
   on_client_disconnected:
+    - script.stop: xvf_profile_tail_restore
     - lambda: id(respeaker).restore_command_profile();
   on_stt_end:
+    - script.stop: xvf_profile_tail_restore
     - lambda: id(respeaker).restore_command_profile();
   on_stt_vad_end:
+    - script.stop: xvf_profile_tail_restore
     - lambda: id(respeaker).restore_command_profile();
     # Release the beam as soon as command capture is over, so the stop-word
     # detector can still hear the user from anywhere in the room during TTS.
     - lambda: id(respeaker).unlock_beam();
   on_end:
+    - script.stop: xvf_profile_tail_restore
     - lambda: id(respeaker).restore_command_profile();
     # Safety-net unlock: covers paths where on_stt_vad_end never fired
     # (pipeline error mid-capture, abort, etc.). Idempotent.
